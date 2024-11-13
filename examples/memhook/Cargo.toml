@@ -1,0 +1,12 @@
+[package]
+name = "memhook"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fishhook = {path = "../.."}
+libc = "0.2"
+ctor = "0.2.8"
+
+[lib]
+crate-type = ["dylib"]

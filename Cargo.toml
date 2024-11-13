@@ -1,0 +1,11 @@
+[package]
+name = "fishhook"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mach2 = "0.4"
+libc = "0.2"
+
+[lib]
+crate-type = ["dylib"]
