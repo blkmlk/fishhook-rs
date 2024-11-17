@@ -4,8 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-mach2 = "0.4"
+#mach = { version = "0.3", features = ["deprecated"] }
+mach2 = { version = "0.4", features = ["unstable"] }
 libc = "0.2"
+goblin = "0.9"
+object = "0.36"
 
 [lib]
 crate-type = ["dylib"]

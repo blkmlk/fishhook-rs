@@ -4,9 +4,18 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-fishhook = {path = "../.."}
+fishhook = { path = "../.." }
 libc = "0.2"
 ctor = "0.2.8"
 
+[build]
+rustflags = [
+    "-Clink-arg=-undefined", "-Clink-arg=dynamic_lookup", # allow undefined symbols
+    "-Clink-args=-rdynamic" # export symbols in an executable
+]
+
+[profile.release]
+debug = true
+
 [lib]
-crate-type = ["dylib"]
+crate-type = ["cdylib"]

@@ -81,35 +81,35 @@ static int prepend_rebindings(struct rebindings_entry **rebindings_head,
   return 0;
 }
 
-#if 0
-static int get_protection(void *addr, vm_prot_t *prot, vm_prot_t *max_prot) {
-  mach_port_t task = mach_task_self();
-  vm_size_t size = 0;
-  vm_address_t address = (vm_address_t)addr;
-  memory_object_name_t object;
-#ifdef __LP64__
-  mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-  vm_region_basic_info_data_64_t info;
-  kern_return_t info_ret = vm_region_64(
-      task, &address, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_64_t)&info, &count, &object);
-#else
-  mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT;
-  vm_region_basic_info_data_t info;
-  kern_return_t info_ret = vm_region(task, &address, &size, VM_REGION_BASIC_INFO, (vm_region_info_t)&info, &count, &object);
-#endif
-  if (info_ret == KERN_SUCCESS) {
-    if (prot != NULL)
-      *prot = info.protection;
-
-    if (max_prot != NULL)
-      *max_prot = info.max_protection;
-
-    return 0;
-  }
-
-  return -1;
-}
-#endif
+//#if 0
+//static int get_protection(void *addr, vm_prot_t *prot, vm_prot_t *max_prot) {
+//  mach_port_t task = mach_task_self();
+//  vm_size_t size = 0;
+//  vm_address_t address = (vm_address_t)addr;
+//  memory_object_name_t object;
+//#ifdef __LP64__
+//  mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+//  vm_region_basic_info_data_64_t info;
+//  kern_return_t info_ret = vm_region_64(
+//      task, &address, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_64_t)&info, &count, &object);
+//#else
+//  mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT;
+//  vm_region_basic_info_data_t info;
+//  kern_return_t info_ret = vm_region(task, &address, &size, VM_REGION_BASIC_INFO, (vm_region_info_t)&info, &count, &object);
+//#endif
+//  if (info_ret == KERN_SUCCESS) {
+//    if (prot != NULL)
+//      *prot = info.protection;
+//
+//    if (max_prot != NULL)
+//      *max_prot = info.max_protection;
+//
+//    return 0;
+//  }
+//
+//  return -1;
+//}
+//#endif
 
 static void perform_rebinding_with_section(struct rebindings_entry *rebindings,
                                            section_t *section,
@@ -230,20 +230,20 @@ static void _rebind_symbols_for_image(const struct mach_header *header,
                                       intptr_t slide) {
     rebind_symbols_for_image(_rebindings_head, header, slide);
 }
-
-int rebind_symbols_image(void *header,
-                         intptr_t slide,
-                         struct rebinding rebindings[],
-                         size_t rebindings_nel) {
-    struct rebindings_entry *rebindings_head = NULL;
-    int retval = prepend_rebindings(&rebindings_head, rebindings, rebindings_nel);
-    rebind_symbols_for_image(rebindings_head, (const struct mach_header *) header, slide);
-    if (rebindings_head) {
-      free(rebindings_head->rebindings);
-    }
-    free(rebindings_head);
-    return retval;
-}
+//
+//int rebind_symbols_image(void *header,
+//                         intptr_t slide,
+//                         struct rebinding rebindings[],
+//                         size_t rebindings_nel) {
+//    struct rebindings_entry *rebindings_head = NULL;
+//    int retval = prepend_rebindings(&rebindings_head, rebindings, rebindings_nel);
+//    rebind_symbols_for_image(rebindings_head, (const struct mach_header *) header, slide);
+//    if (rebindings_head) {
+//      free(rebindings_head->rebindings);
+//    }
+//    free(rebindings_head);
+//    return retval;
+//}
 
 int rebind_symbols(struct rebinding rebindings[], size_t rebindings_nel) {
   int retval = prepend_rebindings(&_rebindings_head, rebindings, rebindings_nel);
