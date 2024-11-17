@@ -71,8 +71,8 @@ pub struct Rebinding {
     pub function: *const c_void,
 }
 
-pub unsafe fn register(bindings: &[Rebinding]) {
-    BINDINGS = bindings.to_vec();
+pub unsafe fn register(bindings: Vec<Rebinding>) {
+    BINDINGS = bindings;
 
     _dyld_register_func_for_add_image(add_image);
 }

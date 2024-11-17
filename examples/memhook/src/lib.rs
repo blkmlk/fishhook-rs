@@ -39,7 +39,7 @@ fn init() {
     unsafe {
         preserve();
 
-        register(&[Rebinding {
+        register(vec![Rebinding {
             name: "malloc".to_string(),
             function: my_malloc as *const c_void,
         }]);
