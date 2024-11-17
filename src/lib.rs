@@ -49,6 +49,17 @@ pub struct Dl_info {
     pub dli_saddr: *mut c_void,
 }
 
+impl Dl_info {
+    pub fn new() -> Self {
+        Self {
+            dli_fname: null(),
+            dli_fbase: null_mut(),
+            dli_sname: null(),
+            dli_saddr: null_mut(),
+        }
+    }
+}
+
 extern "C" {
     fn _dyld_register_func_for_add_image(callback: extern "C" fn(*const c_void, c_int));
     fn dladdr(header: *const c_void, dl_info: *mut Dl_info) -> c_int;
@@ -57,8 +68,7 @@ extern "C" {
 #[derive(Clone)]
 pub struct Rebinding {
     pub name: String,
-    pub replacement: *const c_void,
-    pub replaced: *const c_void,
+    pub function: *const c_void,
 }
 
 pub unsafe fn register(bindings: &[Rebinding]) {
@@ -72,7 +82,7 @@ extern "C" fn add_image(header: *const c_void, slide: c_int) {
 }
 
 unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
-    let mut dl_info = new_dl_info();
+    let mut dl_info = Dl_info::new();
     if dladdr(header, &mut dl_info as *mut Dl_info) == 0 {
         return;
     };
@@ -136,9 +146,10 @@ unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
             let sect = segment_cmd.byte_add(size_of::<SegmentCommandT>() + j as usize)
                 as *const arch::SectionT;
 
-            if (*sect).flags & SECTION_TYPE != S_NON_LAZY_SYMBOL_POINTERS
-                && (*sect).flags & SECTION_TYPE != S_LAZY_SYMBOL_POINTERS
-            {
+            if !matches!(
+                (*sect).flags & SECTION_TYPE,
+                S_NON_LAZY_SYMBOL_POINTERS | S_LAZY_SYMBOL_POINTERS
+            ) {
                 continue;
             }
 
@@ -157,18 +168,16 @@ unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
                     as *const c_char;
 
                 let name = CStr::from_ptr(symbol_name).to_string_lossy().to_string();
-                if name.len() <= 1 {
+                if name.is_empty() {
                     continue;
                 }
 
+                let indirect_binding = indirect_bindings.wrapping_add(k as usize) as *const c_void;
+
                 for binding in BINDINGS.iter_mut() {
                     if name[1..] == binding.name {
-                        let indirect_binding =
-                            indirect_bindings.wrapping_add(k as usize) as *const c_void;
-
-                        if !binding.replacement.is_null() && indirect_binding != binding.replacement
-                        {
-                            (*binding).replaced = indirect_binding;
+                        if binding.function.is_null() || indirect_binding == binding.function {
+                            continue;
                         }
 
                         let result = mach_vm_protect(
@@ -179,7 +188,7 @@ unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
                             VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY,
                         );
                         if result == KERN_SUCCESS {
-                            *indirect_bindings.wrapping_add(k as usize) = binding.replacement;
+                            *indirect_bindings.wrapping_add(k as usize) = binding.function;
                         }
                         continue 'symbol_loop;
                     }
@@ -188,15 +197,6 @@ unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
         }
 
         segment_cmd = segment_cmd.byte_add((*segment_cmd).cmdsize as usize);
-    }
-}
-
-fn new_dl_info() -> Dl_info {
-    Dl_info {
-        dli_fname: null(),
-        dli_fbase: null_mut(),
-        dli_sname: null(),
-        dli_saddr: null_mut(),
     }
 }
 

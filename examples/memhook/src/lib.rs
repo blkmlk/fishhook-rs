@@ -41,8 +41,7 @@ fn init() {
 
         register(&[Rebinding {
             name: "malloc".to_string(),
-            replacement: my_malloc as *const c_void,
-            replaced: core::ptr::null(),
+            function: my_malloc as *const c_void,
         }]);
     }
 
