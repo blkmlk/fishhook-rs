@@ -8,14 +8,8 @@ fishhook = { path = "../.." }
 libc = "0.2"
 ctor = "0.2.8"
 
-#[build]
-#rustflags = [
-#    "-Clink-arg=-undefined", "-Clink-arg=dynamic_lookup", # allow undefined symbols
-#    "-Clink-args=-rdynamic" # export symbols in an executable
-#]
-
 [profile.release]
 debug = true
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["dylib"]
