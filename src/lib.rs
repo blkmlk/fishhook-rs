@@ -103,11 +103,10 @@ unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
                 }
             }
             LC_SYMTAB => {
-                symtab_cmd = Some(segment_cmd as *const goblin::mach::load_command::SymtabCommand);
+                symtab_cmd = Some(segment_cmd as *const SymtabCommand);
             }
             LC_DYSYMTAB => {
-                dynsymtab_cmd =
-                    Some(segment_cmd as *const goblin::mach::load_command::DysymtabCommand);
+                dynsymtab_cmd = Some(segment_cmd as *const DysymtabCommand);
             }
             _ => {}
         }
