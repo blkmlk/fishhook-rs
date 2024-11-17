@@ -98,7 +98,7 @@ unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
     for _ in 0..(*header).ncmds {
         match (*segment_cmd).cmd {
             arch::LC_SEGMENT_ARCH_DEPENDENT => {
-                if eq_u8((*segment_cmd).segname, SEG_LINKEDIT) {
+                if equal_str((*segment_cmd).segname, SEG_LINKEDIT) {
                     linked_segment_cmd = Some(segment_cmd);
                 }
             }
@@ -127,8 +127,8 @@ unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
 
     for _ in 0..(*header).ncmds {
         if (*segment_cmd).cmd == arch::LC_SEGMENT_ARCH_DEPENDENT
-            && (eq_u8((*segment_cmd).segname, SEG_DATA)
-                || eq_u8((*segment_cmd).segname, SEG_DATA_CONST))
+            && (equal_str((*segment_cmd).segname, SEG_DATA)
+                || equal_str((*segment_cmd).segname, SEG_DATA_CONST))
         {
             bind_symbols(header, segment_cmd, symtab_cmd, dynsymtab_cmd, slide);
         }
@@ -173,7 +173,7 @@ unsafe fn bind_symbols(
                 .byte_add((*symtab_cmd).stroff as usize + (*symbol).n_strx as usize)
                 as *const c_char;
 
-            let name = CStr::from_ptr(symbol_name).to_string_lossy().to_string();
+            let name = CStr::from_ptr(symbol_name).to_str().unwrap();
             if name.is_empty() {
                 continue;
             }
@@ -204,11 +204,6 @@ unsafe fn bind_symbols(
 }
 
 #[inline]
-fn eq_u8(a: impl IntoIterator<Item = u8>, b: &str) -> bool {
-    a.into_iter().zip(b.as_bytes()).all(|(a, b)| a == *b)
-}
-
-#[inline]
-unsafe fn eq_char(a: *const c_char, b: &str) -> bool {
-    CStr::from_ptr(a).to_str().unwrap() == b
+fn equal_str(a: impl IntoIterator<Item = u8>, b: &str) -> bool {
+    a.into_iter().zip(b.as_bytes()).all(|(a, &b)| a == b)
 }
