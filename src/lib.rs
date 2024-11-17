@@ -127,8 +127,8 @@ unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
         return;
     }
 
-    let linkedit_base = slide as uintptr_t + (*linked_segment).vmaddr as uintptr_t
-        - (*linked_segment).fileoff as uintptr_t;
+    let linkedit_base =
+        (slide as u64 + (*linked_segment).vmaddr - (*linked_segment).fileoff) as uintptr_t;
 
     let symoff_ptr = &(*symtab_cmd).symoff as *const u32;
     let symtab = (linkedit_base + symoff_ptr as uintptr_t) as *const arch::NlistT;
@@ -180,7 +180,7 @@ unsafe fn perform_rebinding_with_section(
         (slide as uintptr_t + (*sect).addr as uintptr_t) as *mut *const c_void;
 
     for i in 0..(*sect).size as usize / size_of::<*const c_void>() {
-        let symtab_index = indirect_symbol_indices.byte_add(i);
+        let symtab_index = indirect_symbol_indices.add(i);
         if matches!(
             *symtab_index,
             INDIRECT_SYMBOL_ABS
@@ -191,7 +191,7 @@ unsafe fn perform_rebinding_with_section(
         }
 
         println!("1 {}", *symtab_index);
-        let strtab_offset = (*symtab.byte_add(symtab_index as uintptr_t)).n_strx;
+        let strtab_offset = (*symtab.add(symtab_index as usize)).n_strx;
         println!("2");
         let symbol_name = strtab.byte_add(strtab_offset as usize);
 
