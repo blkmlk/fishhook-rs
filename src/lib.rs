@@ -1,6 +1,6 @@
 extern crate libc;
 
-use crate::arch::MachHeaderT;
+use crate::arch::{MachHeaderT, NlistT, SegmentCommandT};
 use goblin::mach::constants::{
     SECTION_TYPE, SEG_DATA, SEG_LINKEDIT, S_LAZY_SYMBOL_POINTERS, S_NON_LAZY_SYMBOL_POINTERS,
 };
@@ -11,8 +11,6 @@ use mach2::traps::mach_task_self;
 use mach2::vm::mach_vm_protect;
 use mach2::vm_prot::{VM_PROT_COPY, VM_PROT_READ, VM_PROT_WRITE};
 use mach2::vm_types::{mach_vm_address_t, mach_vm_size_t};
-use object::macho::INDIRECT_SYMBOL_ABS;
-use object::macho::INDIRECT_SYMBOL_LOCAL;
 use object::{Object, ObjectSymbolTable};
 use std::ffi::CStr;
 use std::ptr::{null, null_mut};
@@ -66,12 +64,7 @@ pub unsafe fn register(bindings: &[Rebinding]) {
 }
 
 extern "C" fn add_image(header: *const c_void, slide: c_int) {
-    // println!(
-    //     "Adding image: Header: {:#x} {}",
-    //     header as uintptr_t,
-    //     size_of::<arch::MachHeaderT>()
-    // );
-    unsafe { rebind_for_image(header as *const c_void, slide) }
+    unsafe { rebind_for_image(header, slide) }
 }
 
 unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
@@ -79,12 +72,6 @@ unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
     if dladdr(header, &mut dl_info as *mut Dl_info) == 0 {
         return;
     };
-
-    let name = CStr::from_ptr(dl_info.dli_fname)
-        .to_string_lossy()
-        .to_string();
-
-    println!("INFO: {}", name);
 
     let mut linked_segment = None;
     let mut symtab_cmd = None;
@@ -113,13 +100,8 @@ unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
 
         cur_seg_cmd = cur_seg_cmd.byte_add((*cur_seg_cmd).cmdsize as uintptr_t);
     }
-    println!("Linked segment: {:?}", linked_segment);
-    println!("SYMTAB: {:?}", symtab_cmd);
-    println!("DYSYMTAB: {:?}", dysymtab);
 
-    let (Some(linked_segment), Some(symtab_cmd), Some(dysymtab)) =
-        (linked_segment, symtab_cmd, dysymtab)
-    else {
+    let (Some(symtab_cmd), Some(dysymtab)) = (symtab_cmd, dysymtab) else {
         return;
     };
 
@@ -127,97 +109,84 @@ unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
         return;
     }
 
-    let linkedit_base =
-        (slide as u64 + (*linked_segment).vmaddr - (*linked_segment).fileoff) as uintptr_t;
+    let symbol_table = header.byte_add((*symtab_cmd).symoff as uintptr_t) as *const arch::NlistT;
+    let indirect_symbol_table =
+        header.byte_add((*dysymtab).indirectsymoff as uintptr_t) as *const u32;
 
-    let symoff_ptr = &(*symtab_cmd).symoff as *const u32;
-    let symtab = (linkedit_base + symoff_ptr as uintptr_t) as *const arch::NlistT;
-    let strtab = (linkedit_base + symoff_ptr as uintptr_t) as *const c_char;
-
-    let indirect_symtab = (linkedit_base + (*dysymtab).indirectsymoff as uintptr_t) as *const u32;
-
-    let mut cur_seg_cmd =
+    let mut segment_cmd =
         header.byte_add(size_of::<MachHeaderT>() as uintptr_t) as *const arch::SegmentCommandT;
+
     for _ in 0..(*header).ncmds {
-        if (*cur_seg_cmd).cmd == arch::LC_SEGMENT_ARCH_DEPENDENT {
-            if !eq_u8((*cur_seg_cmd).segname, SEG_DATA)
-                && !eq_u8((*cur_seg_cmd).segname, SEG_DATA_CONST)
-            {
-                cur_seg_cmd = cur_seg_cmd.byte_add((*cur_seg_cmd).cmdsize as uintptr_t);
-                continue;
-            }
-
-            for j in 0..(*cur_seg_cmd).nsects {
-                let sect = cur_seg_cmd.byte_add(size_of::<arch::SegmentCommandT>() + j as uintptr_t)
-                    as *const arch::SectionT;
-
-                println!("FLAGS: {}", (*sect).flags);
-
-                if (*sect).flags & SECTION_TYPE == S_LAZY_SYMBOL_POINTERS {
-                    perform_rebinding_with_section(sect, slide, symtab, strtab, indirect_symtab);
-                }
-                if (*sect).flags & SECTION_TYPE == S_NON_LAZY_SYMBOL_POINTERS {
-                    perform_rebinding_with_section(sect, slide, symtab, strtab, indirect_symtab);
-                }
-            }
-        }
-
-        cur_seg_cmd = cur_seg_cmd.byte_add((*cur_seg_cmd).cmdsize as uintptr_t);
-    }
-}
-
-unsafe fn perform_rebinding_with_section(
-    sect: *const arch::SectionT,
-    slide: c_int,
-    symtab: *const arch::NlistT,
-    strtab: *const c_char,
-    indirect_symtab: *const u32,
-) {
-    println!("Performing rebinding with {}", slide);
-
-    let indirect_symbol_indices = indirect_symtab.byte_add((*sect).reserved1 as uintptr_t);
-    let indirect_symbol_bindings =
-        (slide as uintptr_t + (*sect).addr as uintptr_t) as *mut *const c_void;
-
-    for i in 0..(*sect).size as usize / size_of::<*const c_void>() {
-        let symtab_index = indirect_symbol_indices.add(i);
-        if matches!(
-            *symtab_index,
-            INDIRECT_SYMBOL_ABS
-                | INDIRECT_SYMBOL_LOCAL
-                | (INDIRECT_SYMBOL_ABS | INDIRECT_SYMBOL_LOCAL)
-        ) {
+        if (*segment_cmd).cmd != arch::LC_SEGMENT_ARCH_DEPENDENT {
+            segment_cmd = segment_cmd.byte_add((*segment_cmd).cmdsize as uintptr_t);
             continue;
         }
 
-        println!("1 {}", *symtab_index);
-        let strtab_offset = (*symtab.add(symtab_index as usize)).n_strx;
-        println!("2");
-        let symbol_name = strtab.byte_add(strtab_offset as usize);
+        if !eq_u8((*segment_cmd).segname, SEG_DATA)
+            && !eq_u8((*segment_cmd).segname, SEG_DATA_CONST)
+        {
+            segment_cmd = segment_cmd.byte_add((*segment_cmd).cmdsize as uintptr_t);
+            continue;
+        }
 
-        for cur in BINDINGS.iter_mut() {
-            let cur_name = &cur.name;
-            if eq_char(symbol_name, cur_name) {
-                let indirect_binding = indirect_symbol_bindings.wrapping_add(i) as *const c_void;
+        for j in 0..(*segment_cmd).nsects {
+            let sect = segment_cmd
+                .byte_add(size_of::<SegmentCommandT>() as uintptr_t + j as uintptr_t)
+                as *const arch::SectionT;
 
-                if !cur.replacement.is_null() && indirect_binding != cur.replacement {
-                    (*cur).replaced = indirect_binding;
+            if (*sect).flags & SECTION_TYPE != S_NON_LAZY_SYMBOL_POINTERS
+                && (*sect).flags & SECTION_TYPE != S_LAZY_SYMBOL_POINTERS
+            {
+                continue;
+            }
+
+            let indirect_bindings =
+                ((*sect).addr as uintptr_t + slide as uintptr_t) as *mut *const c_void;
+
+            'symbol_loop: for k in 0..(*dysymtab).nindirectsyms {
+                let symbol_index = *indirect_symbol_table.add(k as usize);
+
+                if symbol_index >= (*symtab_cmd).nsyms {
+                    continue;
                 }
 
-                println!("get protection");
+                let symbol = symbol_table.add(symbol_index as usize) as *const NlistT;
+                let symbol_name = header
+                    .byte_add((*symtab_cmd).stroff as uintptr_t + (*symbol).n_strx as uintptr_t)
+                    as *const c_char;
 
-                let result = mach_vm_protect(
-                    mach_task_self(),
-                    indirect_symbol_bindings as mach_vm_address_t,
-                    (*sect).size as mach_vm_size_t,
-                    0,
-                    VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY,
-                );
-                if result == KERN_SUCCESS {
-                    *indirect_symbol_bindings.wrapping_add(i) = cur.replacement;
+                let name = CStr::from_ptr(symbol_name).to_string_lossy().to_string();
+                if name.len() <= 1 {
+                    continue;
+                }
+
+                for binding in BINDINGS.iter_mut() {
+                    if name[1..] == binding.name {
+                        let indirect_binding =
+                            indirect_bindings.wrapping_add(k as usize) as *const c_void;
+
+                        if !binding.replacement.is_null() && indirect_binding != binding.replacement
+                        {
+                            (*binding).replaced = indirect_binding;
+                        }
+
+                        let result = mach_vm_protect(
+                            mach_task_self(),
+                            indirect_bindings as mach_vm_address_t,
+                            (*sect).size as mach_vm_size_t,
+                            0,
+                            VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY,
+                        );
+                        if result == KERN_SUCCESS {
+                            *indirect_bindings.wrapping_add(k as usize) = binding.replacement;
+                        }
+                        continue 'symbol_loop;
+                    }
                 }
             }
         }
+
+        segment_cmd = segment_cmd.byte_add((*segment_cmd).cmdsize as uintptr_t);
     }
 }
 
