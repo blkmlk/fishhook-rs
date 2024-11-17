@@ -2,7 +2,7 @@ use crate::arch::{MachHeaderT, NlistT, SegmentCommandT};
 use goblin::mach::constants::{
     SECTION_TYPE, SEG_DATA, SEG_LINKEDIT, S_LAZY_SYMBOL_POINTERS, S_NON_LAZY_SYMBOL_POINTERS,
 };
-use goblin::mach::load_command::{LC_DYSYMTAB, LC_SYMTAB};
+use goblin::mach::load_command::{DysymtabCommand, SymtabCommand, LC_DYSYMTAB, LC_SYMTAB};
 use mach2::kern_return::KERN_SUCCESS;
 use mach2::traps::mach_task_self;
 use mach2::vm::mach_vm_protect;
@@ -123,80 +123,83 @@ unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
         return;
     }
 
+    let mut segment_cmd = header.byte_add(size_of::<MachHeaderT>()) as *const SegmentCommandT;
+
+    for _ in 0..(*header).ncmds {
+        if (*segment_cmd).cmd == arch::LC_SEGMENT_ARCH_DEPENDENT
+            && (eq_u8((*segment_cmd).segname, SEG_DATA)
+                || eq_u8((*segment_cmd).segname, SEG_DATA_CONST))
+        {
+            bind_symbols(header, segment_cmd, symtab_cmd, dynsymtab_cmd, slide);
+        }
+
+        segment_cmd = segment_cmd.byte_add((*segment_cmd).cmdsize as usize);
+    }
+}
+
+unsafe fn bind_symbols(
+    header: *const MachHeaderT,
+    segment_cmd: *const SegmentCommandT,
+    symtab_cmd: *const SymtabCommand,
+    dynsymtab_cmd: *const DysymtabCommand,
+    slide: i32,
+) {
     let symbol_table = header.byte_add((*symtab_cmd).symoff as usize) as *const NlistT;
     let indirect_symbol_table =
         header.byte_add((*dynsymtab_cmd).indirectsymoff as usize) as *const u32;
 
-    let mut segment_cmd = header.byte_add(size_of::<MachHeaderT>()) as *const SegmentCommandT;
+    for j in 0..(*segment_cmd).nsects {
+        let sect = segment_cmd.byte_add(size_of::<SegmentCommandT>() + j as usize)
+            as *const arch::SectionT;
 
-    for _ in 0..(*header).ncmds {
-        if (*segment_cmd).cmd != arch::LC_SEGMENT_ARCH_DEPENDENT {
-            segment_cmd = segment_cmd.byte_add((*segment_cmd).cmdsize as usize);
+        if !matches!(
+            (*sect).flags & SECTION_TYPE,
+            S_NON_LAZY_SYMBOL_POINTERS | S_LAZY_SYMBOL_POINTERS
+        ) {
             continue;
         }
 
-        if !eq_u8((*segment_cmd).segname, SEG_DATA)
-            && !eq_u8((*segment_cmd).segname, SEG_DATA_CONST)
-        {
-            segment_cmd = segment_cmd.byte_add((*segment_cmd).cmdsize as usize);
-            continue;
-        }
+        let indirect_bindings = ((*sect).addr as usize + slide as usize) as *mut *const c_void;
 
-        for j in 0..(*segment_cmd).nsects {
-            let sect = segment_cmd.byte_add(size_of::<SegmentCommandT>() + j as usize)
-                as *const arch::SectionT;
+        'symbol_loop: for k in 0..(*dynsymtab_cmd).nindirectsyms {
+            let symbol_index = *indirect_symbol_table.add(k as usize);
 
-            if !matches!(
-                (*sect).flags & SECTION_TYPE,
-                S_NON_LAZY_SYMBOL_POINTERS | S_LAZY_SYMBOL_POINTERS
-            ) {
+            if symbol_index >= (*symtab_cmd).nsyms {
                 continue;
             }
 
-            let indirect_bindings = ((*sect).addr as usize + slide as usize) as *mut *const c_void;
+            let symbol = symbol_table.add(symbol_index as usize) as *const NlistT;
+            let symbol_name = header
+                .byte_add((*symtab_cmd).stroff as usize + (*symbol).n_strx as usize)
+                as *const c_char;
 
-            'symbol_loop: for k in 0..(*dynsymtab_cmd).nindirectsyms {
-                let symbol_index = *indirect_symbol_table.add(k as usize);
+            let name = CStr::from_ptr(symbol_name).to_string_lossy().to_string();
+            if name.is_empty() {
+                continue;
+            }
 
-                if symbol_index >= (*symtab_cmd).nsyms {
-                    continue;
-                }
+            let indirect_binding = indirect_bindings.wrapping_add(k as usize) as *const c_void;
 
-                let symbol = symbol_table.add(symbol_index as usize) as *const NlistT;
-                let symbol_name = header
-                    .byte_add((*symtab_cmd).stroff as usize + (*symbol).n_strx as usize)
-                    as *const c_char;
-
-                let name = CStr::from_ptr(symbol_name).to_string_lossy().to_string();
-                if name.is_empty() {
-                    continue;
-                }
-
-                let indirect_binding = indirect_bindings.wrapping_add(k as usize) as *const c_void;
-
-                for binding in BINDINGS.iter_mut() {
-                    if name[1..] == binding.name {
-                        if binding.function.is_null() || indirect_binding == binding.function {
-                            continue;
-                        }
-
-                        let result = mach_vm_protect(
-                            mach_task_self(),
-                            indirect_bindings as mach_vm_address_t,
-                            (*sect).size as mach_vm_size_t,
-                            0,
-                            VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY,
-                        );
-                        if result == KERN_SUCCESS {
-                            *indirect_bindings.wrapping_add(k as usize) = binding.function;
-                        }
-                        continue 'symbol_loop;
+            for binding in BINDINGS.iter_mut() {
+                if name[1..] == binding.name {
+                    if binding.function.is_null() || indirect_binding == binding.function {
+                        continue;
                     }
+
+                    let result = mach_vm_protect(
+                        mach_task_self(),
+                        indirect_bindings as mach_vm_address_t,
+                        (*sect).size as mach_vm_size_t,
+                        0,
+                        VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY,
+                    );
+                    if result == KERN_SUCCESS {
+                        *indirect_bindings.wrapping_add(k as usize) = binding.function;
+                    }
+                    continue 'symbol_loop;
                 }
             }
         }
-
-        segment_cmd = segment_cmd.byte_add((*segment_cmd).cmdsize as usize);
     }
 }
 
