@@ -7,6 +7,8 @@ edition = "2021"
 fishhook = { path = "../.." }
 libc = "0.2"
 ctor = "0.2.8"
+backtrace = "0.3"
+addr2line = "0.24"
 
 [profile.release]
 debug = true
