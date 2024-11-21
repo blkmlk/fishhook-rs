@@ -2,7 +2,7 @@ mod backtrace;
 mod collector;
 mod tree;
 
-use ::backtrace::Backtrace;
+use crate::collector::Collector;
 use fishhook::{register, Rebinding};
 use libc::{dlsym, size_t, RTLD_NEXT};
 use std::ffi::c_void;
@@ -16,13 +16,14 @@ static mut ORIGINAL_REALLOC: Option<
     unsafe extern "C" fn(ptr: *mut c_void, size: size_t) -> *mut c_void,
 > = None;
 static mut ORIGINAL_FREE: Option<unsafe extern "C" fn(ptr: *mut c_void)> = None;
+static mut COLLECTOR: Option<Collector> = None;
 
 #[no_mangle]
 pub unsafe extern "C" fn my_malloc(size: size_t) -> *mut c_void {
     let original_malloc = ORIGINAL_MALLOC.unwrap();
     let ptr = original_malloc(size);
 
-    capture_function_addresses_and_names(size, my_malloc as usize);
+    COLLECTOR.as_mut().unwrap().on_malloc(size, ptr as usize);
 
     ptr
 }
@@ -31,47 +32,14 @@ pub unsafe extern "C" fn my_malloc(size: size_t) -> *mut c_void {
 pub unsafe extern "C" fn my_free(ptr: *mut c_void) {
     let original_free = ORIGINAL_FREE.unwrap();
     original_free(ptr);
+
+    COLLECTOR.as_mut().unwrap().on_free(ptr as usize);
 }
 
-fn capture_function_addresses_and_names(size: size_t, stop_address: usize) {
-    let backtrace = Backtrace::new();
-
-    println!("Backtrace: {}", size);
-    let mut tabs = 1;
-    for frame in backtrace.frames() {
-        println!("frame");
-        for symbol in frame.symbols() {
-            if !frame.ip().is_null() {
-                if frame.ip() as usize == stop_address {
-                    break;
-                }
-
-                let name = symbol
-                    .name()
-                    .map_or("<unknown>".to_string(), |name| name.to_string());
-                if let (Some(filename), Some(no)) = (symbol.filename(), symbol.lineno()) {
-                    for _ in 0..tabs {
-                        print!("  ");
-                    }
-
-                    println!(
-                        "Address: {:?}, Function: {}  {}:{}",
-                        frame.ip(),
-                        name,
-                        filename.display(),
-                        no,
-                    );
-
-                    tabs += 1;
-                }
-            }
-        }
-        println!("symbol");
-    }
-}
-
-unsafe fn preserve() {
+unsafe fn prepare() {
     INIT.call_once(|| {
+        COLLECTOR = Some(Collector::new());
+
         let symbol = b"malloc\0";
         let malloc_ptr = dlsym(RTLD_NEXT, symbol.as_ptr() as *const _);
         if !malloc_ptr.is_null() {
@@ -93,7 +61,7 @@ unsafe fn preserve() {
 #[ctor::ctor]
 fn init() {
     unsafe {
-        preserve();
+        prepare();
 
         register(vec![
             Rebinding {
