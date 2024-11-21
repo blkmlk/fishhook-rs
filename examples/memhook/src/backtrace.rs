@@ -1,5 +1,6 @@
 use backtrace::Backtrace;
 
+#[derive(Default)]
 pub struct TraceInfo {
     pub frame_address: usize,
     pub function_name: String,

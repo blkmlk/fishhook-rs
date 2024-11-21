@@ -17,7 +17,32 @@ impl Tree {
 
     pub fn on_malloc(&mut self, tracer: impl Iterator<Item = TraceInfo>, size: usize, ptr: usize) {
         self.pointers.insert(ptr, size);
-        self.root.push_malloc(tracer, size);
+        self.root.push_alloc(tracer, size);
+    }
+
+    pub fn on_calloc(
+        &mut self,
+        tracer: impl Iterator<Item = TraceInfo>,
+        size: usize,
+        blk_size: usize,
+        ptr: usize,
+    ) {
+        self.pointers.insert(ptr, size * blk_size);
+        self.root.push_alloc(tracer, size * blk_size);
+    }
+
+    pub fn on_realloc(&mut self, tracer: impl Iterator<Item = TraceInfo>, size: usize, ptr: usize) {
+        let old_size = self.pointers.entry(ptr).or_insert(size);
+
+        if *old_size != size {
+            return;
+        }
+
+        if *old_size > size {
+            self.root.push_alloc(tracer, *old_size - size);
+        } else {
+            self.root.push_free(tracer, size - *old_size);
+        }
     }
 
     pub fn on_free(&mut self, tracer: impl Iterator<Item = TraceInfo>, ptr: usize) {
@@ -29,14 +54,13 @@ impl Tree {
 
 #[derive(Default)]
 struct Node {
-    function_name: String,
-    location: String,
+    info: TraceInfo,
     stats: NodeStats,
     children: HashMap<String, Node>,
 }
 
 impl Node {
-    pub fn push_malloc(&mut self, tracer: impl Iterator<Item = TraceInfo>, size: usize) {
+    pub fn push_alloc(&mut self, tracer: impl Iterator<Item = TraceInfo>, size: usize) {
         let f = |s: &mut NodeStats| {
             s.allocated += size;
             s.total_allocated += size;
@@ -48,6 +72,7 @@ impl Node {
     pub fn push_free(&mut self, tracer: impl Iterator<Item = TraceInfo>, size: usize) {
         let f = |s: &mut NodeStats| {
             s.allocated -= size;
+            s.total_freed += size;
         };
 
         self.push_and_modify(tracer, f);
@@ -63,8 +88,7 @@ impl Node {
         };
 
         let child = self.children.entry(next.function_name.clone()).or_default();
-        child.location = next.location;
-        child.function_name = next.function_name;
+        child.info = next;
         f(&mut child.stats);
         child.push_and_modify(tracer, f)
     }
@@ -73,6 +97,7 @@ impl Node {
 #[derive(Default)]
 struct NodeStats {
     total_allocated: usize,
+    total_freed: usize,
     num_allocations: usize,
     allocated: usize,
 }
