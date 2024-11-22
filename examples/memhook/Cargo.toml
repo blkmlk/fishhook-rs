@@ -15,4 +15,4 @@ inferno = "0.12.0"
 debug = true
 
 [lib]
-crate-type = ["dylib"]
+crate-type = ["cdylib"]

@@ -51,8 +51,12 @@ impl Tree {
         }
     }
 
-    pub fn traverse(&self, mut f: impl FnMut(&Node)) {
-        self.root.traverse(&mut f);
+    pub fn fg_values(&self) -> Vec<String> {
+        let mut values = vec![];
+
+        self.root.fg_values(&mut values, "", "");
+
+        values
     }
 }
 
@@ -82,10 +86,17 @@ impl Node {
         self.push_and_modify(tracer, f);
     }
 
-    pub fn traverse(&self, f: &mut impl FnMut(&Node)) {
-        f(self);
+    pub fn fg_values(&self, v: &mut Vec<String>, parent: &str, values: &str) {
+        let parent = if parent.is_empty() {
+            self.info.function_name.clone()
+        } else {
+            format!("{};{}", parent, self.info.function_name)
+        };
+
+        v.push(format!("{} {}", parent, self.stats.total_allocated));
+
         for (_, c) in self.children.iter() {
-            c.traverse(f);
+            c.fg_values(v, &parent, &values);
         }
     }
 
@@ -95,12 +106,13 @@ impl Node {
         f: impl Fn(&mut NodeStats),
     ) {
         let Some(next) = tracer.next() else {
+            f(&mut self.stats);
             return;
         };
 
         let child = self.children.entry(next.function_name.clone()).or_default();
         child.info = next;
-        f(&mut child.stats);
+
         child.push_and_modify(tracer, f)
     }
 }

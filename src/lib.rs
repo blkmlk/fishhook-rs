@@ -86,8 +86,6 @@ unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
     if dladdr(header, &mut dl_info as *mut Dl_info) == 0 {
         return;
     };
-    let name = CStr::from_ptr(dl_info.dli_fname).to_str().unwrap();
-    println!("{}", name);
 
     let mut linked_segment_cmd = None;
     let mut symtab_cmd = None;
@@ -174,21 +172,10 @@ unsafe fn bind_symbols(
                 .byte_add((*symtab_cmd).stroff as usize + (*symbol).n_strx as usize)
                 as *const c_char;
 
-            if symbol_name.is_null() {
-                continue;
-            }
-
-            println!("A - {}", (*symbol_name).to_string());
-            // let mut ptr = symbol_name;
-            // while *ptr != 0 {
-            //     ptr = ptr.byte_add(1);
-            // }
-
-            println!("11");
             let Ok(name) = CStr::from_ptr(symbol_name).to_str() else {
                 continue;
             };
-            println!("22");
+
             if name.is_empty() {
                 continue;
             }

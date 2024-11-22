@@ -4,19 +4,23 @@ use inferno::flamegraph;
 
 pub struct Collector {
     allocations: Tree,
+    filename: String,
 }
 
 impl Collector {
-    pub fn new() -> Self {
+    pub fn new(filename: String) -> Self {
         Self {
             allocations: Tree::new(),
+            filename,
         }
     }
 
     pub fn on_malloc(&mut self, size: usize, ptr: usize) {
         let bt = MyBacktrace::new();
 
-        self.allocations.on_malloc(bt, size, ptr)
+        self.allocations.on_malloc(bt, size, ptr);
+
+        // self.save_flamegraph(&self.filename);
     }
 
     pub fn on_calloc(&mut self, size: usize, blk_size: usize, ptr: usize) {
@@ -34,29 +38,11 @@ impl Collector {
     pub fn on_free(&mut self, ptr: usize) {
         let bt = MyBacktrace::new();
 
-        self.allocations.on_free(bt, ptr)
+        self.allocations.on_free(bt, ptr);
     }
 
     pub fn save_flamegraph(&self, filename: &str) {
-        let mut lines = vec![];
-
-        self.allocations.traverse(|node| {
-            let fields = node
-                .children
-                .values()
-                .map(|child| child.info.function_name.clone())
-                .collect::<Vec<_>>()
-                .join(";");
-
-            let values = node
-                .children
-                .values()
-                .map(|child| child.stats.total_allocated.to_string())
-                .collect::<Vec<_>>()
-                .join(";");
-
-            lines.push(format!("{} {}\n", fields, values));
-        });
+        let lines = self.allocations.fg_values();
 
         let file = std::fs::File::create(filename).unwrap();
         let mut opts = flamegraph::Options::default();

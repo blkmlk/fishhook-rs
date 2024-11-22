@@ -6,6 +6,3 @@ edition = "2021"
 [dependencies]
 mach2 = { version = "0.4" }
 goblin = "0.9"
-
-[lib]
-crate-type = ["dylib"]
