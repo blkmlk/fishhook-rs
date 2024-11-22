@@ -50,13 +50,17 @@ impl Tree {
             self.root.push_free(tracer, size);
         }
     }
+
+    pub fn traverse(&self, mut f: impl FnMut(&Node)) {
+        self.root.traverse(&mut f);
+    }
 }
 
 #[derive(Default)]
-struct Node {
-    info: TraceInfo,
-    stats: NodeStats,
-    children: HashMap<String, Node>,
+pub struct Node {
+    pub info: TraceInfo,
+    pub stats: NodeStats,
+    pub children: HashMap<String, Node>,
 }
 
 impl Node {
@@ -78,6 +82,13 @@ impl Node {
         self.push_and_modify(tracer, f);
     }
 
+    pub fn traverse(&self, f: &mut impl FnMut(&Node)) {
+        f(self);
+        for (_, c) in self.children.iter() {
+            c.traverse(f);
+        }
+    }
+
     fn push_and_modify(
         &mut self,
         mut tracer: impl Iterator<Item = TraceInfo>,
@@ -95,9 +106,9 @@ impl Node {
 }
 
 #[derive(Default)]
-struct NodeStats {
-    total_allocated: usize,
-    total_freed: usize,
-    num_allocations: usize,
-    allocated: usize,
+pub struct NodeStats {
+    pub total_allocated: usize,
+    pub total_freed: usize,
+    pub num_allocations: usize,
+    pub allocated: usize,
 }

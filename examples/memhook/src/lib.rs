@@ -2,7 +2,6 @@ mod backtrace;
 mod collector;
 mod tree;
 
-use crate::collector::Collector;
 use fishhook::{register, Rebinding};
 use libc::{dlsym, size_t, RTLD_NEXT};
 use std::ffi::c_void;
@@ -16,14 +15,14 @@ static mut ORIGINAL_REALLOC: Option<
     unsafe extern "C" fn(ptr: *mut c_void, size: size_t) -> *mut c_void,
 > = None;
 static mut ORIGINAL_FREE: Option<unsafe extern "C" fn(ptr: *mut c_void)> = None;
-static mut COLLECTOR: Option<Collector> = None;
+// static mut COLLECTOR: Option<Collector> = None;
 
 #[no_mangle]
 pub unsafe extern "C" fn my_malloc(size: size_t) -> *mut c_void {
     let original_malloc = ORIGINAL_MALLOC.unwrap();
     let ptr = original_malloc(size);
 
-    COLLECTOR.as_mut().unwrap().on_malloc(size, ptr as usize);
+    // COLLECTOR.as_mut().unwrap().on_malloc(size, ptr as usize);
 
     ptr
 }
@@ -33,12 +32,12 @@ pub unsafe extern "C" fn my_free(ptr: *mut c_void) {
     let original_free = ORIGINAL_FREE.unwrap();
     original_free(ptr);
 
-    COLLECTOR.as_mut().unwrap().on_free(ptr as usize);
+    // COLLECTOR.as_mut().unwrap().on_free(ptr as usize);
 }
 
-unsafe fn prepare() {
+unsafe fn preserve() {
     INIT.call_once(|| {
-        COLLECTOR = Some(Collector::new());
+        // COLLECTOR = Some(Collector::new());
 
         let symbol = b"malloc\0";
         let malloc_ptr = dlsym(RTLD_NEXT, symbol.as_ptr() as *const _);
@@ -61,7 +60,7 @@ unsafe fn prepare() {
 #[ctor::ctor]
 fn init() {
     unsafe {
-        prepare();
+        preserve();
 
         register(vec![
             Rebinding {
@@ -77,3 +76,10 @@ fn init() {
 
     println!("Initializing memory system...");
 }
+
+// #[no_mangle]
+// pub extern "C" fn deinit_library() {
+//     unsafe {
+//         println!("Library deinitialized.");
+//     }
+// }
