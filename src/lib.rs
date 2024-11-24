@@ -82,11 +82,6 @@ extern "C" fn add_image(header: *const c_void, slide: c_int) {
 }
 
 unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
-    let mut dl_info = Dl_info::new();
-    if dladdr(header, &mut dl_info as *mut Dl_info) == 0 {
-        return;
-    };
-
     let mut linked_segment_cmd = None;
     let mut symtab_cmd = None;
     let mut dynsymtab_cmd = None;
@@ -172,7 +167,10 @@ unsafe fn bind_symbols(
                 .byte_add((*symtab_cmd).stroff as usize + (*symbol).n_strx as usize)
                 as *const c_char;
 
-            let name = CStr::from_ptr(symbol_name).to_str().unwrap();
+            let Ok(name) = CStr::from_ptr(symbol_name).to_str() else {
+                continue;
+            };
+
             if name.is_empty() {
                 continue;
             }
