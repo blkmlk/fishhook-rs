@@ -9,7 +9,6 @@ use mach2::vm::mach_vm_protect;
 use mach2::vm_prot::{VM_PROT_COPY, VM_PROT_READ, VM_PROT_WRITE};
 use mach2::vm_types::{mach_vm_address_t, mach_vm_size_t};
 use std::ffi::{c_char, c_int, c_void, CStr};
-use std::ptr::{null, null_mut};
 
 static mut BINDINGS: Vec<Rebinding> = Vec::new();
 
@@ -41,28 +40,8 @@ mod arch {
     pub type MachHeaderT = Header32;
 }
 
-#[repr(C)]
-pub struct Dl_info {
-    pub dli_fname: *const c_char,
-    pub dli_fbase: *mut c_void,
-    pub dli_sname: *const c_char,
-    pub dli_saddr: *mut c_void,
-}
-
-impl Dl_info {
-    pub fn new() -> Self {
-        Self {
-            dli_fname: null(),
-            dli_fbase: null_mut(),
-            dli_sname: null(),
-            dli_saddr: null_mut(),
-        }
-    }
-}
-
 extern "C" {
     fn _dyld_register_func_for_add_image(callback: extern "C" fn(*const c_void, c_int));
-    fn dladdr(header: *const c_void, dl_info: *mut Dl_info) -> c_int;
 }
 
 #[derive(Clone)]
