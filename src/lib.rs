@@ -1,4 +1,4 @@
-use crate::arch::{MachHeaderT, NlistT, SegmentCommandT};
+use crate::arch::{MachHeaderT, NlistT, SectionT, SegmentCommandT};
 use goblin::mach::constants::{
     SECTION_TYPE, SEG_DATA, SEG_LINKEDIT, S_LAZY_SYMBOL_POINTERS, S_NON_LAZY_SYMBOL_POINTERS,
 };
@@ -122,8 +122,9 @@ unsafe fn bind_symbols(
         header.byte_add((*dynsymtab_cmd).indirectsymoff as usize) as *const u32;
 
     for j in 0..(*segment_cmd).nsects {
-        let sect = segment_cmd.byte_add(size_of::<SegmentCommandT>() + j as usize)
-            as *const arch::SectionT;
+        let sect = segment_cmd
+            .byte_add(size_of::<SegmentCommandT>() + j as usize * size_of::<SectionT>())
+            as *const SectionT;
 
         if !matches!(
             (*sect).flags & SECTION_TYPE,
@@ -142,6 +143,13 @@ unsafe fn bind_symbols(
             }
 
             let symbol = symbol_table.add(symbol_index as usize) as *const NlistT;
+
+            let string_table_end = (*symtab_cmd).stroff as usize + (*symtab_cmd).strsize as usize;
+            let offset = (*symtab_cmd).stroff as usize + (*symbol).n_strx as usize;
+            if offset >= string_table_end {
+                continue;
+            }
+
             let symbol_name = header
                 .byte_add((*symtab_cmd).stroff as usize + (*symbol).n_strx as usize)
                 as *const c_char;
