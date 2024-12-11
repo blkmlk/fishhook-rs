@@ -56,8 +56,16 @@ pub unsafe fn register(bindings: Vec<Rebinding>) {
     _dyld_register_func_for_add_image(add_image);
 }
 
+static mut CNT: i32 = 0;
+
 extern "C" fn add_image(header: *const c_void, slide: c_int) {
-    unsafe { rebind_for_image(header, slide) }
+    unsafe {
+        if CNT == 1 {
+            rebind_for_image(header, slide);
+        }
+
+        CNT += 1;
+    }
 }
 
 unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
