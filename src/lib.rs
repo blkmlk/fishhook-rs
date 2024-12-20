@@ -56,15 +56,9 @@ pub unsafe fn register(bindings: Vec<Rebinding>) {
     _dyld_register_func_for_add_image(add_image);
 }
 
-static mut CNT: i32 = 0;
-
 extern "C" fn add_image(header: *const c_void, slide: c_int) {
     unsafe {
-        if CNT == 1 {
-            rebind_for_image(header, slide);
-        }
-
-        CNT += 1;
+        rebind_for_image(header, slide);
     }
 }
 
@@ -143,8 +137,9 @@ unsafe fn bind_symbols(
 
         let indirect_bindings = ((*sect).addr as usize + slide as usize) as *mut *const c_void;
 
-        'symbol_loop: for k in 0..(*dynsymtab_cmd).nindirectsyms {
-            let symbol_index = *indirect_symbol_table.add(k as usize);
+        let len_sect = (*sect).size as usize / size_of::<*const c_void>();
+        'symbol_loop: for k in 0..len_sect {
+            let symbol_index = *indirect_symbol_table.add(k);
 
             if symbol_index >= (*symtab_cmd).nsyms {
                 continue;
