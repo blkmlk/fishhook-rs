@@ -109,7 +109,9 @@ pub unsafe fn register(bindings: Vec<Rebinding>) {
 }
 
 extern "C" fn add_image(header: *const c_void, slide: c_int) {
-    unsafe { rebind_for_image(header, slide) }
+    unsafe {
+        rebind_for_image(header, slide);
+    }
 }
 
 unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
@@ -187,8 +189,9 @@ unsafe fn bind_symbols(
 
         let indirect_bindings = ((*sect).addr as usize + slide as usize) as *mut *const c_void;
 
-        'symbol_loop: for k in 0..(*dynsymtab_cmd).nindirectsyms {
-            let symbol_index = *indirect_symbol_table.add(k as usize);
+        let len_sect = (*sect).size as usize / size_of::<*const c_void>();
+        'symbol_loop: for k in 0..len_sect {
+            let symbol_index = *indirect_symbol_table.add(k);
 
             if symbol_index >= (*symtab_cmd).nsyms {
                 continue;
