@@ -1,4 +1,7 @@
-# fishhook-rs
+# fishhook
+
+
+## fishhook-rs
 
 A Rust port of [fishhook](https://github.com/facebook/fishhook) — a library that enables dynamically rebinding symbols
 in Mach-O binaries at runtime. Useful for intercepting system functions like `malloc`, `free`, or `open` on Apple
@@ -12,13 +15,11 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-fishhook-rs = "0.1"
+fishhook = "0.1"
 ```
 
 ### Usage
-
 Example below uses [ctor](https://github.com/mmastrac/rust-ctor) for invoking ***init()*** first
-
 ```rust
 use fishhook::{register, Rebinding};
 
@@ -50,3 +51,5 @@ fn init() {
     }
 }
 ```
+
+License: MIT

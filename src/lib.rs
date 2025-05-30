@@ -13,7 +13,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! fishhook-rs = "0.1"
+//! fishhook = "0.1"
 //! ```
 //!
 //! ## Usage
