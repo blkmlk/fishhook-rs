@@ -1,8 +1,15 @@
 [package]
 name = "fishhook"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+homepage = "https://github.com/blkmlk/fishhook-rs"
+license = "MIT"
+description = "A library that enables dynamically rebinding symbols in Mach-O binaries at runtime"
+keywords = ["fishhook", "dylib", "macos", "mach-o", "binding"]
+categories = ["os::macos-apis", "os"]
+repository = "https://github.com/blkmlk/fishhook-rs"
+readme = "README.md"
 
 [dependencies]
 mach2 = { version = "0.4" }
-goblin = "0.9"
+goblin = "0.10.0"
