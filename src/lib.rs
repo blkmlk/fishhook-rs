@@ -50,8 +50,8 @@
 //! }
 //! ```
 
-mod arch;
+pub mod arch;
 
 pub unsafe fn register(bindings: Vec<arch::Rebinding>) {
-    arch::register(bindings)
+    arch::register(bindings);
 }

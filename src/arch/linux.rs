@@ -1,3 +1,243 @@
-use super::Rebinding;
+#![allow(non_camel_case_types)]
+#![allow(clippy::missing_safety_doc)]
 
-pub unsafe fn register(bindings: Vec<Rebinding>) {}
+use super::Rebinding;
+use core::ffi::{c_char, c_int, c_void};
+use elf::abi::{
+    DT_JMPREL, DT_NULL, DT_PLTRELSZ, DT_RELA, DT_RELASZ, DT_STRSZ, DT_STRTAB, DT_SYMTAB,
+};
+use elf::dynamic::Elf64_Dyn;
+use elf::relocation::Elf64_Rela;
+use libc::{
+    dl_iterate_phdr, dl_phdr_info, dlsym, mprotect, sysconf, Elf64_Phdr, Elf64_Sym, PROT_READ,
+    PROT_WRITE, PT_DYNAMIC, RTLD_NEXT, _SC_PAGESIZE,
+};
+use std::ffi::CStr;
+use std::ptr;
+use std::sync::Mutex;
+
+// x86_64 relocation types we care about
+const R_X86_64_JUMP_SLOT: u32 = 7;
+const R_X86_64_GLOB_DAT: u32 = 6;
+
+// ELF64_R_SYM / ELF64_R_TYPE
+#[inline(always)]
+fn rela_sym(r_info: u64) -> u32 {
+    (r_info >> 32) as u32
+}
+#[inline(always)]
+fn rela_type(r_info: u64) -> u32 {
+    (r_info & 0xffffffff) as u32
+}
+
+static BINDINGS: Mutex<Vec<Rebinding>> = Mutex::new(Vec::new());
+
+pub unsafe fn register(bindings: Vec<Rebinding>) {
+    {
+        let mut g = BINDINGS.lock().unwrap();
+        *g = bindings;
+    }
+    unsafe { rebind_all_loaded_images() };
+}
+
+/// Re-apply current bindings to all loaded objects (call this after dlopen if you don't interpose dlopen).
+#[no_mangle]
+pub unsafe extern "C" fn rebind_all_loaded_images() {
+    unsafe {
+        dl_iterate_phdr(Some(iter_cb), ptr::null_mut());
+    }
+}
+
+unsafe extern "C" fn iter_cb(info: *mut dl_phdr_info, _size: usize, _data: *mut c_void) -> c_int {
+    let info = &*info;
+    let base = info.dlpi_addr as usize;
+    let phnum = info.dlpi_phnum as usize;
+    let phdrs = std::slice::from_raw_parts(info.dlpi_phdr as *const Elf64_Phdr, phnum);
+
+    // Find PT_DYNAMIC
+    let mut dynamic: *const Elf64_Dyn = ptr::null();
+    for ph in phdrs {
+        if ph.p_type == PT_DYNAMIC {
+            dynamic = (base + ph.p_vaddr as usize) as *const Elf64_Dyn;
+            break;
+        }
+    }
+    if dynamic.is_null() {
+        return 0;
+    }
+
+    // Parse dynamic table
+    let mut strtab = 0usize;
+    let mut strsz = 0usize;
+    let mut symtab = 0usize;
+
+    let mut jmprel = 0usize;
+    let mut pltrelsz = 0usize;
+
+    let mut rela = 0usize;
+    let mut relasz = 0usize;
+
+    let mut d = dynamic;
+    loop {
+        let tag = (*d).d_tag;
+        if tag == DT_NULL {
+            break;
+        }
+        match tag {
+            DT_STRTAB => strtab = (*d).d_un as usize,
+            DT_STRSZ => strsz = (*d).d_un as usize,
+            DT_SYMTAB => symtab = (*d).d_un as usize,
+            DT_JMPREL => jmprel = (*d).d_un as usize,
+            DT_PLTRELSZ => pltrelsz = (*d).d_un as usize,
+            DT_RELA => rela = (*d).d_un as usize,
+            DT_RELASZ => relasz = (*d).d_un as usize,
+            _ => {}
+        }
+        d = d.add(1);
+    }
+
+    if strtab == 0 || symtab == 0 || strsz == 0 {
+        return 0;
+    }
+
+    let strtab_ptr = strtab as *const u8;
+    let symtab_ptr = symtab as *const Elf64_Sym;
+
+    // Patch PLT relocations (.rela.plt)
+    if jmprel != 0 && pltrelsz != 0 {
+        let relas = jmprel as *const Elf64_Rela;
+        let count = pltrelsz / core::mem::size_of::<Elf64_Rela>();
+        unsafe { patch_relas(base, relas, count, symtab_ptr, strtab_ptr, strsz, true) };
+    }
+
+    // Patch non-PLT relocations (.rela.dyn)
+    if rela != 0 && relasz != 0 {
+        let relas = rela as *const Elf64_Rela;
+        let count = relasz / core::mem::size_of::<Elf64_Rela>();
+        unsafe { patch_relas(base, relas, count, symtab_ptr, strtab_ptr, strsz, false) };
+    }
+
+    0
+}
+
+unsafe fn patch_relas(
+    base: usize,
+    relas: *const Elf64_Rela,
+    count: usize,
+    symtab: *const Elf64_Sym,
+    strtab: *const u8,
+    strsz: usize,
+    is_plt: bool,
+) {
+    let bindings = BINDINGS.lock().unwrap();
+    if bindings.is_empty() {
+        return;
+    }
+
+    for i in 0..count {
+        let r = &*relas.add(i);
+        let rtype = rela_type(r.r_info);
+
+        // Only patch relevant relocation types
+        if is_plt {
+            if rtype != R_X86_64_JUMP_SLOT {
+                continue;
+            }
+        } else {
+            // Common non-PLT function/data imports:
+            if rtype != R_X86_64_GLOB_DAT && rtype != R_X86_64_JUMP_SLOT {
+                continue;
+            }
+        }
+
+        let sym_idx = rela_sym(r.r_info) as usize;
+        let sym = &*symtab.add(sym_idx);
+
+        let name_off = sym.st_name as usize;
+        if name_off >= strsz {
+            continue;
+        }
+
+        let name_ptr = strtab.add(name_off) as *const c_char;
+        let Ok(sym_name) = CStr::from_ptr(name_ptr).to_str() else {
+            continue;
+        };
+        if sym_name.is_empty() {
+            continue;
+        }
+
+        // r_offset is a VA inside the object; add base to get runtime address.
+        let slot = (base + r.r_offset as usize) as *mut *const c_void;
+
+        for b in bindings.iter() {
+            if b.name.is_empty() {
+                continue;
+            }
+            let Ok(wanted) = CStr::from_ptr(b.name.as_ptr() as *const i8).to_str() else {
+                continue;
+            };
+            if wanted != sym_name {
+                continue;
+            }
+
+            // // Record original once if requested and not already set
+            // if !b.function.is_null() && unsafe { *b.original }.is_null() {
+            //     unsafe { *b.original = *slot };
+            // }
+
+            // Skip if already patched
+            if *slot == b.function {
+                break;
+            }
+
+            unsafe { make_writable_and_patch(slot, b.function) };
+            break;
+        }
+    }
+}
+
+unsafe fn make_writable_and_patch(slot: *mut *const c_void, new: *const c_void) {
+    let page = sysconf(_SC_PAGESIZE) as usize;
+    let addr = slot as usize;
+    let page_start = addr & !(page - 1);
+
+    // Make the page writable (RELRO often made it read-only)
+    let rc = mprotect(page_start as *mut c_void, page, PROT_READ | PROT_WRITE);
+    if rc != 0 {
+        // If this fails (hardened env), we just don't patch.
+        return;
+    }
+
+    *slot = new;
+
+    // Restore read-only (optional; keeps behavior closer to RELRO intent)
+    let _ = mprotect(page_start as *mut c_void, page, PROT_READ);
+}
+
+// -----------------------------
+// Optional: dlopen interposition
+// -----------------------------
+// This is NOT required for dynamic binding, but helps keep hooks applied as new DSOs load.
+//
+// Your process must load this library (via LD_PRELOAD or linking) for this wrapper to be used.
+
+type dlopen_fn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
+
+#[no_mangle]
+pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c_void {
+    // resolve the real dlopen
+    let real: dlopen_fn = {
+        let p = unsafe { dlsym(RTLD_NEXT, b"dlopen\0".as_ptr() as *const c_char) };
+        if p.is_null() {
+            return ptr::null_mut();
+        }
+        unsafe { core::mem::transmute(p) }
+    };
+
+    let handle = unsafe { real(filename, flags) };
+
+    // Re-apply hooks after a new image is loaded
+    unsafe { rebind_all_loaded_images() };
+
+    handle
+}
