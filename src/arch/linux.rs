@@ -3,9 +3,7 @@
 
 use super::Rebinding;
 use core::ffi::{c_char, c_int, c_void};
-use elf::abi::{
-    DT_JMPREL, DT_NULL, DT_PLTRELSZ, DT_RELA, DT_RELASZ, DT_STRSZ, DT_STRTAB, DT_SYMTAB,
-};
+use elf::abi::{DT_NULL, DT_RELA, DT_RELASZ, DT_STRSZ, DT_STRTAB, DT_SYMTAB};
 use elf::dynamic::Elf64_Dyn;
 use elf::relocation::Elf64_Rela;
 use libc::{
@@ -71,9 +69,6 @@ unsafe extern "C" fn iter_cb(info: *mut dl_phdr_info, _size: usize, _data: *mut 
     let mut strsz = 0usize;
     let mut symtab = 0usize;
 
-    let mut jmprel = 0usize;
-    let mut pltrelsz = 0usize;
-
     let mut rela = 0usize;
     let mut relasz = 0usize;
 
@@ -87,8 +82,6 @@ unsafe extern "C" fn iter_cb(info: *mut dl_phdr_info, _size: usize, _data: *mut 
             DT_STRTAB => strtab = (*d).d_un as usize,
             DT_STRSZ => strsz = (*d).d_un as usize,
             DT_SYMTAB => symtab = (*d).d_un as usize,
-            DT_JMPREL => jmprel = (*d).d_un as usize,
-            DT_PLTRELSZ => pltrelsz = (*d).d_un as usize,
             DT_RELA => rela = (*d).d_un as usize,
             DT_RELASZ => relasz = (*d).d_un as usize,
             _ => {}
@@ -102,13 +95,6 @@ unsafe extern "C" fn iter_cb(info: *mut dl_phdr_info, _size: usize, _data: *mut 
 
     let strtab_ptr = strtab as *const u8;
     let symtab_ptr = symtab as *const Elf64_Sym;
-
-    // Patch PLT relocations (.rela.plt)
-    if jmprel != 0 && pltrelsz != 0 {
-        let relas = jmprel as *const Elf64_Rela;
-        let count = pltrelsz / core::mem::size_of::<Elf64_Rela>();
-        unsafe { patch_relas(base, relas, count, symtab_ptr, strtab_ptr, strsz, true) };
-    }
 
     // Patch non-PLT relocations (.rela.dyn)
     if rela != 0 && relasz != 0 {
@@ -186,11 +172,11 @@ unsafe fn patch_relas(
             // }
 
             // Skip if already patched
-            if *slot == b.function {
+            if *slot == b.function as *const c_void {
                 break;
             }
 
-            unsafe { make_writable_and_patch(slot, b.function) };
+            unsafe { make_writable_and_patch(slot, b.function as *const c_void) };
             break;
         }
     }
