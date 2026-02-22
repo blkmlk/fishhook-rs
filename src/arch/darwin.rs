@@ -1,7 +1,7 @@
 use super::Rebinding;
-use crate::arch::{MachHeaderT, NlistT, SectionT, SegmentCommandT};
+use crate::arch::platform::arch::{MachHeaderT, NlistT, SectionT, SegmentCommandT};
 use goblin::mach::constants::{
-    SECTION_TYPE, SEG_DATA, SEG_LINKEDIT, S_LAZY_SYMBOL_POINTERS, S_NON_LAZY_SYMBOL_POINTERS,
+    SECTION_TYPE, SEG_DATA, S_LAZY_SYMBOL_POINTERS, S_NON_LAZY_SYMBOL_POINTERS,
 };
 use goblin::mach::load_command::{DysymtabCommand, SymtabCommand, LC_DYSYMTAB, LC_SYMTAB};
 use mach2::kern_return::KERN_SUCCESS;
@@ -10,8 +10,9 @@ use mach2::vm::mach_vm_protect;
 use mach2::vm_prot::{VM_PROT_COPY, VM_PROT_READ, VM_PROT_WRITE};
 use mach2::vm_types::{mach_vm_address_t, mach_vm_size_t};
 use std::ffi::{c_char, c_int, c_void, CStr};
+use std::sync::Mutex;
 
-static mut BINDINGS: Vec<Rebinding> = Vec::new();
+static BINDINGS: Mutex<Vec<Rebinding>> = Mutex::new(Vec::new());
 
 const SEG_DATA_CONST: &str = "__DATA_CONST";
 
@@ -46,7 +47,8 @@ extern "C" {
 }
 
 pub unsafe fn register(bindings: Vec<Rebinding>) {
-    BINDINGS = bindings;
+    let mut locked = BINDINGS.lock().unwrap();
+    *locked = bindings;
 
     _dyld_register_func_for_add_image(add_image);
 }
@@ -58,7 +60,6 @@ extern "C" fn add_image(header: *const c_void, slide: c_int) {
 }
 
 unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
-    let mut linked_segment_cmd = None;
     let mut symtab_cmd = None;
     let mut dynsymtab_cmd = None;
 
@@ -68,11 +69,6 @@ unsafe fn rebind_for_image(header: *const c_void, slide: c_int) {
 
     for _ in 0..(*header).ncmds {
         match (*segment_cmd).cmd {
-            arch::LC_SEGMENT_ARCH_DEPENDENT => {
-                if equal_str((*segment_cmd).segname, SEG_LINKEDIT) {
-                    linked_segment_cmd = Some(segment_cmd);
-                }
-            }
             LC_SYMTAB => {
                 symtab_cmd = Some(segment_cmd as *const SymtabCommand);
             }
@@ -162,9 +158,13 @@ unsafe fn bind_symbols(
 
             let indirect_binding = indirect_bindings.wrapping_add(k as usize) as *const c_void;
 
-            for binding in BINDINGS.iter_mut() {
+            let mut bindings = BINDINGS.lock().unwrap();
+
+            for binding in &mut *bindings {
                 if name[1..] == binding.name {
-                    if binding.function.is_null() || indirect_binding == binding.function {
+                    let fn_ptr = binding.function as *const c_void;
+
+                    if fn_ptr.is_null() || indirect_binding == fn_ptr {
                         continue;
                     }
 
@@ -176,7 +176,7 @@ unsafe fn bind_symbols(
                         VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY,
                     );
                     if result == KERN_SUCCESS {
-                        *indirect_bindings.wrapping_add(k as usize) = binding.function;
+                        *indirect_bindings.wrapping_add(k as usize) = fn_ptr;
                     }
                     continue 'symbol_loop;
                 }
