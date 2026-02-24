@@ -28,7 +28,7 @@ fn rela_type(r_info: u64) -> u32 {
 
 static BINDINGS: Mutex<Vec<Rebinding>> = Mutex::new(Vec::new());
 
-pub unsafe fn register(bindings: Vec<Rebinding>) {
+pub unsafe fn register_bindings(bindings: Vec<Rebinding>) {
     {
         let mut g = BINDINGS.lock().unwrap();
         *g = bindings;

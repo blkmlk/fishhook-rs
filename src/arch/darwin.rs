@@ -46,9 +46,11 @@ extern "C" {
     fn _dyld_register_func_for_add_image(callback: extern "C" fn(*const c_void, c_int));
 }
 
-pub unsafe fn register(bindings: Vec<Rebinding>) {
-    let mut locked = BINDINGS.lock().unwrap();
-    *locked = bindings;
+pub unsafe fn register_bindings(bindings: Vec<Rebinding>) {
+    {
+        let mut locked = BINDINGS.lock().unwrap();
+        *locked = bindings;
+    }
 
     _dyld_register_func_for_add_image(add_image);
 }
