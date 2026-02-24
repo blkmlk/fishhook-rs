@@ -14,7 +14,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-fishhook = "0.2"
+fishhook = "0.3"
 ```
 
 ### Usage
